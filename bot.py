@@ -1,4 +1,7 @@
 import logging
+import os
+
+from google import genai
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton, BotCommand, MenuButtonCommands,
@@ -14,7 +17,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TOKEN = "9284766898:AAHydkJ4Fu74CBavAV7Qv1OLMtcKYjiy11M"
+# ========== 配置区域 ==========
+TOKEN = "9284766898:AAHydkJ4Fu74CBavAV7Qv1OLMtcKYjiy11M"  # 建议改用环境变量
+GEMINI_API_KEY = "ВАШ_GEMINI_API_KEY_ЗДЕСЬ"  # 替换为你的 Gemini API 密钥
+
+# 初始化 Gemini 客户端
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 SUBJECTS = {
     "russian": "Русский язык",
@@ -34,7 +42,8 @@ SUBJECT_BUTTONS = {
 
 GRADES = ["6", "7", "8", "9"]
 
-# ---------- Клавиатуры ----------
+
+# ---------- 键盘 ----------
 
 def subjects_reply_keyboard() -> ReplyKeyboardMarkup:
     items = list(SUBJECT_BUTTONS)
@@ -56,7 +65,6 @@ def grades_inline_keyboard(subject_key: str) -> InlineKeyboardMarkup:
 
 
 def actions_inline_keyboard(subject_key: str, grade: str) -> InlineKeyboardMarkup:
-    """Кнопки после выбора класса: что делать дальше."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Решить задачу", callback_data=f"solve:{subject_key}:{grade}")],
         [InlineKeyboardButton("📖 Узнать теорию", callback_data=f"learn:{subject_key}:{grade}")],
@@ -65,7 +73,26 @@ def actions_inline_keyboard(subject_key: str, grade: str) -> InlineKeyboardMarku
     ])
 
 
-# ---------- Хэндлеры ----------
+# ---------- Gemini 调用 ----------
+
+async def ask_gemini(subject_name: str, grade: str, task_text: str) -> str:
+    """向 Gemini 发送任务条件，返回解答文本。"""
+    prompt = (
+        f"Ты — помощник по учёбе. Предмет: {subject_name}, класс: {grade}.\n"
+        f"Реши следующую задачу и объясни решение по шагам:\n\n{task_text}"
+    )
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        logger.error("Gemini API error: %s", e)
+        return "❌ Не удалось получить ответ от ИИ. Попробуйте позже."
+
+
+# ---------- 处理器 ----------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -91,17 +118,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await q.answer()
     data = q.data
 
-    # Возврат к предметам
     if data == "back:subjects":
         await q.edit_message_text("Выбери предмет заново (кнопки внизу).")
         return
 
-    # Выбор класса -> приветствие Reshatel
     if data.startswith("grade:"):
         _, subject_key, grade = data.split(":", 2)
         subject_name = SUBJECTS[subject_key]
 
-        # сохраняем выбор пользователя
         context.user_data["subject"] = subject_key
         context.user_data["grade"] = grade
 
@@ -114,7 +138,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    # Пользователь нажал "Решить задачу"
     if data.startswith("solve:"):
         _, subject_key, grade = data.split(":", 2)
         await q.edit_message_text(
@@ -125,11 +148,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 [InlineKeyboardButton("⬅ Назад", callback_data=f"grade:{subject_key}:{grade}")]
             ])
         )
-        # Включаем режим ожидания задачи
         context.user_data["awaiting_task"] = True
         return
 
-    # "Узнать теорию"
     if data.startswith("learn:"):
         _, subject_key, grade = data.split(":", 2)
         await q.edit_message_text(
@@ -142,7 +163,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    # "Примеры заданий"
     if data.startswith("examples:"):
         _, subject_key, grade = data.split(":", 2)
         await q.edit_message_text(
@@ -164,16 +184,30 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Если пользователь нажал "Решить задачу" и теперь пишет условие
+    # 用户点击了「Решить задачу」，正在输入题目
     if context.user_data.get("awaiting_task"):
         context.user_data["awaiting_task"] = False
-        subject = SUBJECTS.get(context.user_data.get("subject", ""), "—")
-        grade = context.user_data.get("grade", "—")
-        await update.message.reply_text(
-            f"📥 Принял задачу по предмету *{subject}*, *{grade} класс*.\n"
-            f"Скоро здесь появится решение.",
+
+        subject_key = context.user_data.get("subject", "")
+        grade = context.user_data.get("grade", "")
+        subject_name = SUBJECTS.get(subject_key, "—")
+        task_text = update.message.text
+
+        # 先回复一条等待消息
+        wait_msg = await update.message.reply_text(
+            f"🤔 Думаю над задачей по предмету *{subject_name}*, *{grade} класс*...",
             parse_mode="Markdown"
         )
+
+        # 调用 Gemini
+        answer = await ask_gemini(subject_name, grade, task_text)
+
+        # 编辑等待消息为最终答案
+        # Telegram 单条消息上限 4096 字符，过长则分段
+        if len(answer) <= 4000:
+            await wait_msg.edit_text(answer)
+        else:
+            await wait_msg.edit_text(answer[:4000] + "\n\n... (ответ обрезан)")
         return
 
     await update.message.reply_text(
@@ -196,7 +230,6 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
 
-    # Нажатия на кнопки-предметы (ReplyKeyboard)
     pattern = "^(" + "|".join(s.replace("|", r"\|") for s in SUBJECT_BUTTONS) + ")$"
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Regex(pattern),
