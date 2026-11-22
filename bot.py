@@ -34,7 +34,6 @@ SUBJECT_BUTTONS = {
 
 GRADES = ["6", "7", "8", "9"]
 
-
 # ---------- Клавиатуры ----------
 
 def subjects_reply_keyboard() -> ReplyKeyboardMarkup:
@@ -120,8 +119,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _, subject_key, grade = data.split(":", 2)
         await q.edit_message_text(
             f"✏️ *{SUBJECTS[subject_key]}, {grade} класс*\n\n"
-            f"Напишите условие задачи — я помогу с решением.\n"
-            f"(Здесь подключите вашу логику / ИИ / базу задач.)",
+            f"Напишите условие задачи — я помогу с решением.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅ Назад", callback_data=f"grade:{subject_key}:{grade}")]
@@ -136,8 +134,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _, subject_key, grade = data.split(":", 2)
         await q.edit_message_text(
             f"📖 *{SUBJECTS[subject_key]}, {grade} класс — теория*\n\n"
-            f"Здесь будет список тем и материалы.\n"
-            f"(Подставьте свои темы.)",
+            f"Здесь будет список тем и материалы.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅ Назад", callback_data=f"grade:{subject_key}:{grade}")]
@@ -150,8 +147,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _, subject_key, grade = data.split(":", 2)
         await q.edit_message_text(
             f"📝 *{SUBJECTS[subject_key]}, {grade} класс — примеры*\n\n"
-            f"Здесь будут примеры заданий.\n"
-            f"(Подставьте свои примеры.)",
+            f"Здесь будут примеры заданий.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅ Назад", callback_data=f"grade:{subject_key}:{grade}")]
@@ -175,7 +171,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         grade = context.user_data.get("grade", "—")
         await update.message.reply_text(
             f"📥 Принял задачу по предмету *{subject}*, *{grade} класс*.\n"
-            f"Скоро здесь появится решение (подключите свою логику).",
+            f"Скоро здесь появится решение.",
             parse_mode="Markdown"
         )
         return
