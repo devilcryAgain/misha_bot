@@ -1,7 +1,8 @@
 import logging
-import os
 
-from google import genai
+from gigachat import GigaChat
+from gigachat.models import Chat, Messages, MessagesRole
+
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton, BotCommand, MenuButtonCommands,
@@ -19,10 +20,18 @@ logger = logging.getLogger(__name__)
 
 # ========== 配置区域 ==========
 TOKEN = "9284766898:AAHydkJ4Fu74CBavAV7Qv1OLMtcKYjiy11M"  # 建议改用环境变量
-GEMINI_API_KEY = "ВАШ_GEMINI_API_KEY_ЗДЕСЬ"  # 替换为你的 Gemini API 密钥
 
-# 初始化 Gemini 客户端
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+# GigaChat 授权密钥（在 Sber Studio 获取）
+GIGACHAT_CREDENTIALS = "MDFhMGE1NmYtNGE0ZS03YmUxLTg1MDgtYTExMmRjYmZkMDkwOjNkMGJjYjlmLTUwZDEtNDgxNS04ODE0LTMzNTY0MGNlNDRjMg=="
+
+# 初始化 GigaChat 客户端
+# verify_ssl_certs=False 适用于开发环境；生产环境建议安装证书后去掉此参数
+giga_client = GigaChat(
+    credentials=GIGACHAT_CREDENTIALS,
+    scope="GIGACHAT_API_PERS",   # 个人用户
+    model="GigaChat-2",          # 可选 GigaChat-2 / GigaChat-2-Pro / GigaChat-2-Max
+    verify_ssl_certs=False,
+)
 
 SUBJECTS = {
     "russian": "Русский язык",
@@ -73,23 +82,25 @@ def actions_inline_keyboard(subject_key: str, grade: str) -> InlineKeyboardMarku
     ])
 
 
-# ---------- Gemini 调用 ----------
+# ---------- GigaChat 调用 ----------
 
-async def ask_gemini(subject_name: str, grade: str, task_text: str) -> str:
-    """向 Gemini 发送任务条件，返回解答文本。"""
+async def ask_gigachat(subject_name: str, grade: str, task_text: str) -> str:
+    """向 GigaChat 发送任务条件，返回解答文本。"""
     prompt = (
         f"Ты — помощник по учёбе. Предмет: {subject_name}, класс: {grade}.\n"
         f"Реши следующую задачу и объясни решение по шагам:\n\n{task_text}"
     )
     try:
-        response = gemini_client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
+        chat = Chat(
+            messages=[Messages(role=MessagesRole.USER, content=prompt)]
         )
-        return response.text
+        response = giga_client.chat(chat)
+        # 从响应中提取文本
+        answer = response.choices[0].message.content
+        return answer if answer else "❌ Модель вернула пустой ответ."
     except Exception as e:
-        logger.error("Gemini API error: %s", e)
-        return "❌ Не удалось получить ответ от ИИ. Попробуйте позже."
+        logger.error("GigaChat API error: %s", e)
+        return "❌ Не удалось получить ответ от GigaChat. Попробуйте позже."
 
 
 # ---------- 处理器 ----------
@@ -184,7 +195,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # 用户点击了「Решить задачу」，正在输入题目
     if context.user_data.get("awaiting_task"):
         context.user_data["awaiting_task"] = False
 
@@ -193,17 +203,15 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         subject_name = SUBJECTS.get(subject_key, "—")
         task_text = update.message.text
 
-        # 先回复一条等待消息
         wait_msg = await update.message.reply_text(
             f"🤔 Думаю над задачей по предмету *{subject_name}*, *{grade} класс*...",
             parse_mode="Markdown"
         )
 
-        # 调用 Gemini
-        answer = await ask_gemini(subject_name, grade, task_text)
+        # 调用 GigaChat
+        answer = await ask_gigachat(subject_name, grade, task_text)
 
-        # 编辑等待消息为最终答案
-        # Telegram 单条消息上限 4096 字符，过长则分段
+        # Telegram 单条消息上限 4096 字符
         if len(answer) <= 4000:
             await wait_msg.edit_text(answer)
         else:
